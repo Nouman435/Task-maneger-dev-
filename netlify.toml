@@ -1,6 +1,13 @@
 [build]
 command = "npm run build --workspace client"
 publish = "client/dist"
+functions = "server/netlify/functions"
 
 [build.environment]
-VITE_LOCAL_ONLY = "true"
+VITE_LOCAL_ONLY = "false"
+
+[[redirects]]
+from = "/api/*"
+to = "/.netlify/functions/api/:splat"
+status = 200
+force = true
