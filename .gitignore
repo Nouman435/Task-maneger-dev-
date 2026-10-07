@@ -5,3 +5,6 @@ server/data/
 .env.*
 !.env.example
 npm-debug.log*
+
+# Local Netlify folder
+.netlify

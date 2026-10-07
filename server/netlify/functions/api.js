@@ -1,15 +1,32 @@
-const { randomBytes, randomUUID, createHash } = require("node:crypto");
+const { randomUUID, createHash } = require("node:crypto");
 const bcrypt = require("bcryptjs");
-const { getStore } = require("@netlify/blobs");
+const { connectLambda, getStore } = require("@netlify/blobs");
+const jwt = require("jsonwebtoken");
 const { z } = require("zod");
 const { authSchema, taskCreateSchema, taskUpdateSchema } = require("../../src/validation");
 const { assistantSchema, localAssistantResult } = require("../../src/ai");
 
-const SESSION_LIFETIME = 12 * 60 * 60 * 1000;
 const MAX_BODY_LENGTH = 32 * 1024;
 
 function hash(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function jwtSecret() {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret.length < 32) {
+    const error = new Error("JWT_SECRET must be configured as a secret Netlify environment variable.");
+    error.statusCode = 503;
+    throw error;
+  }
+  return secret;
+}
+
+function createToken(user) {
+  return jwt.sign({ email: user.email }, jwtSecret(), {
+    subject: user.id,
+    expiresIn: "12h"
+  });
 }
 
 function json(statusCode, body) {
@@ -53,7 +70,7 @@ function getRoute(event) {
 async function updateTasks(store, userId, update) {
   const key = `user:${userId}`;
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const current = await store.getWithMetadata(key, { type: "json", consistency: "strong" });
+    const current = await store.getWithMetadata(key, { type: "json" });
     const tasks = current.data || [];
     const result = update(tasks);
     if (result.noWrite) return result.value;
@@ -88,47 +105,43 @@ function createHandler(store) {
           await store.delete(`account:${user.id}`);
           return json(409, { error: "An account with this email already exists." });
         }
-        const token = randomBytes(32).toString("base64url");
-        await store.setJSON(`session:${hash(token)}`, {
-          userId: user.id,
-          expiresAt: Date.now() + SESSION_LIFETIME
-        });
-        return json(201, { token, user: { id: user.id, email: user.email } });
+        return json(201, { token: createToken(user), user: { id: user.id, email: user.email } });
       }
 
       if (route === "api/auth/login" && method === "POST") {
         const input = authSchema.parse(body);
-        const userId = await store.get(`email:${hash(input.email)}`, { type: "json", consistency: "strong" });
-        const user = userId ? await store.get(`account:${userId}`, { type: "json", consistency: "strong" }) : null;
+        const userId = await store.get(`email:${hash(input.email)}`, { type: "json" });
+        const user = userId ? await store.get(`account:${userId}`, { type: "json" }) : null;
         if (!user || !(await bcrypt.compare(input.password, user.passwordHash))) {
           return json(401, { error: "Email or password is incorrect." });
         }
-        const token = randomBytes(32).toString("base64url");
-        await store.setJSON(`session:${hash(token)}`, {
-          userId: user.id,
-          expiresAt: Date.now() + SESSION_LIFETIME
-        });
-        return json(200, { token, user: { id: user.id, email: user.email } });
+        return json(200, { token: createToken(user), user: { id: user.id, email: user.email } });
       }
 
       const authorization = (event.headers?.authorization || event.headers?.Authorization || "").split(" ");
       const sessionToken = authorization[0] === "Bearer" ? authorization[1] : "";
       if (!sessionToken) return json(401, { error: "Please sign in to continue." });
-      const sessionKey = `session:${hash(sessionToken)}`;
-      const session = await store.get(sessionKey, { type: "json", consistency: "strong" });
-      if (!session || session.expiresAt <= Date.now()) {
-        if (session) await store.delete(sessionKey);
-        return json(401, { error: "Your session has expired. Please sign in again." });
+      let claims;
+      try {
+        claims = jwt.verify(sessionToken, jwtSecret());
+      } catch (error) {
+        if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) {
+          return json(401, { error: "Your session has expired. Please sign in again." });
+        }
+        throw error;
       }
-      const user = await store.get(`account:${session.userId}`, { type: "json", consistency: "strong" });
-      if (!user) return json(401, { error: "Your session is invalid. Please sign in again." });
+      if (!claims || typeof claims === "string" || typeof claims.sub !== "string" ||
+        typeof claims.email !== "string") {
+        return json(401, { error: "Your session is invalid. Please sign in again." });
+      }
+      const user = { id: claims.sub, email: claims.email };
 
       if (route === "api/auth/me" && method === "GET") {
         return json(200, { user: { id: user.id, email: user.email } });
       }
 
       if (route === "api/tasks/stats" && method === "GET") {
-        const tasks = await store.get(`user:${user.id}`, { type: "json", consistency: "strong" }) || [];
+        const tasks = await store.get(`user:${user.id}`, { type: "json" }) || [];
         const today = new Date().toISOString().slice(0, 10);
         return json(200, {
           stats: {
@@ -148,7 +161,7 @@ function createHandler(store) {
           category: z.string().trim().max(60).optional(),
           q: z.string().trim().max(100).optional()
         }).strict().parse(query);
-        let tasks = await store.get(`user:${user.id}`, { type: "json", consistency: "strong" }) || [];
+        let tasks = await store.get(`user:${user.id}`, { type: "json" }) || [];
         if (filters.status) tasks = tasks.filter(task => task.status === filters.status);
         if (filters.priority) tasks = tasks.filter(task => task.priority === filters.priority);
         if (filters.category) tasks = tasks.filter(task => task.category === filters.category);
@@ -212,7 +225,7 @@ function createHandler(store) {
 
       if (route === "api/ai/assistant" && method === "POST") {
         const input = assistantSchema.parse(body);
-        const tasks = await store.get(`user:${user.id}`, { type: "json", consistency: "strong" }) || [];
+        const tasks = await store.get(`user:${user.id}`, { type: "json" }) || [];
         const result = localAssistantResult(input, {
           completedTasks: tasks.filter(task => task.status === "completed").slice(0, 50),
           openTasks: tasks.filter(task => task.status !== "completed").slice(0, 50)
@@ -232,5 +245,8 @@ function createHandler(store) {
   };
 }
 
-exports.handler = event => createHandler(getStore("daymark-data"))(event);
+exports.handler = event => {
+  connectLambda(event);
+  return createHandler(getStore("daymark-data"))(event);
+};
 exports.createHandler = createHandler;
