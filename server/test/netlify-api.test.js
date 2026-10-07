@@ -12,7 +12,7 @@ function createMemoryStore() {
     },
     async getWithMetadata(key) {
       const record = records.get(key);
-      return record ? { data: structuredClone(record.data), etag: record.etag } : { data: null, etag: null };
+      return record ? { data: structuredClone(record.data), etag: record.etag } : null;
     },
     async setJSON(key, value, options = {}) {
       const current = records.get(key);

@@ -86,10 +86,10 @@ async function updateTasks(store, userId, update) {
   const key = `user:${userId}`;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const current = await store.getWithMetadata(key, { type: "json" });
-    const tasks = current.data || [];
+    const tasks = current?.data || [];
     const result = update(tasks);
     if (result.noWrite) return result.value;
-    const options = current.etag ? { onlyIfMatch: current.etag } : { onlyIfNew: true };
+    const options = current?.etag ? { onlyIfMatch: current.etag } : { onlyIfNew: true };
     const write = await store.setJSON(key, result.tasks, options);
     if (write.modified) return result.value;
   }
