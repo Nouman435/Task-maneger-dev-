@@ -1,10 +1,9 @@
 const { randomBytes, randomUUID, createHash } = require("node:crypto");
 const bcrypt = require("bcryptjs");
-const { connectLambda, getStore } = require("@netlify/blobs");
 const jwt = require("jsonwebtoken");
 const { z } = require("zod");
-const { authSchema, taskCreateSchema, taskUpdateSchema } = require("../../src/validation");
-const { assistantSchema, localAssistantResult } = require("../../src/ai");
+const { authSchema, taskCreateSchema, taskUpdateSchema } = require("../src/validation");
+const { assistantSchema, localAssistantResult } = require("../src/ai");
 
 const MAX_BODY_LENGTH = 32 * 1024;
 
@@ -25,7 +24,7 @@ async function jwtSecret(store) {
 
   const key = "config:jwt-secret";
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const existingSecret = await store.get(key, { type: "json" });
+    const existingSecret = await store.get(key, { type: "json", consistency: "strong" });
     if (typeof existingSecret === "string" && existingSecret.length >= 32) return existingSecret;
     if (existingSecret !== null) fail(503, "The stored authentication configuration is invalid.");
 
@@ -85,7 +84,7 @@ function getRoute(event) {
 async function updateTasks(store, userId, update) {
   const key = `user:${userId}`;
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const current = await store.getWithMetadata(key, { type: "json" });
+    const current = await store.getWithMetadata(key, { type: "json", consistency: "strong" });
     const tasks = current?.data || [];
     const result = update(tasks);
     if (result.noWrite) return result.value;
@@ -126,8 +125,10 @@ function createHandler(store) {
 
       if (route === "api/auth/login" && method === "POST") {
         const input = authSchema.parse(body);
-        const userId = await store.get(`email:${hash(input.email)}`, { type: "json" });
-        const user = userId ? await store.get(`account:${userId}`, { type: "json" }) : null;
+        const userId = await store.get(`email:${hash(input.email)}`, { type: "json", consistency: "strong" });
+        const user = userId
+          ? await store.get(`account:${userId}`, { type: "json", consistency: "strong" })
+          : null;
         if (!user || !(await bcrypt.compare(input.password, user.passwordHash))) {
           return json(401, { error: "Email or password is incorrect." });
         }
@@ -159,7 +160,7 @@ function createHandler(store) {
       }
 
       if (route === "api/tasks/stats" && method === "GET") {
-        const tasks = await store.get(`user:${user.id}`, { type: "json" }) || [];
+        const tasks = await store.get(`user:${user.id}`, { type: "json", consistency: "strong" }) || [];
         const today = new Date().toISOString().slice(0, 10);
         return json(200, {
           stats: {
@@ -179,7 +180,7 @@ function createHandler(store) {
           category: z.string().trim().max(60).optional(),
           q: z.string().trim().max(100).optional()
         }).strict().parse(query);
-        let tasks = await store.get(`user:${user.id}`, { type: "json" }) || [];
+        let tasks = await store.get(`user:${user.id}`, { type: "json", consistency: "strong" }) || [];
         if (filters.status) tasks = tasks.filter(task => task.status === filters.status);
         if (filters.priority) tasks = tasks.filter(task => task.priority === filters.priority);
         if (filters.category) tasks = tasks.filter(task => task.category === filters.category);
@@ -243,7 +244,7 @@ function createHandler(store) {
 
       if (route === "api/ai/assistant" && method === "POST") {
         const input = assistantSchema.parse(body);
-        const tasks = await store.get(`user:${user.id}`, { type: "json" }) || [];
+        const tasks = await store.get(`user:${user.id}`, { type: "json", consistency: "strong" }) || [];
         const result = localAssistantResult(input, {
           completedTasks: tasks.filter(task => task.status === "completed").slice(0, 50),
           openTasks: tasks.filter(task => task.status !== "completed").slice(0, 50)
@@ -263,8 +264,4 @@ function createHandler(store) {
   };
 }
 
-exports.handler = event => {
-  connectLambda(event);
-  return createHandler(getStore("daymark-data"))(event);
-};
 exports.createHandler = createHandler;

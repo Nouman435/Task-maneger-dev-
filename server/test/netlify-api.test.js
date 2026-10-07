@@ -1,7 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createHandler } = require("../netlify/functions/api");
-const { handler } = require("../netlify/functions/api");
+const { createHandler } = require("../netlify/api-handler.cjs");
 
 function createMemoryStore() {
   const records = new Map();
@@ -27,20 +26,6 @@ function createMemoryStore() {
     }
   };
 }
-
-test("Netlify Lambda compatibility initializes the managed Blobs context", async () => {
-  const response = await handler({
-    path: "/.netlify/functions/api/health",
-    httpMethod: "GET",
-    headers: {
-      "x-nf-site-id": "test-site",
-      "x-nf-deploy-id": "test-deploy"
-    },
-    blobs: Buffer.from(JSON.stringify({ url: "https://blobs.netlify.com", token: "test-token" })).toString("base64")
-  });
-  assert.equal(response.statusCode, 200);
-  assert.deepEqual(JSON.parse(response.body), { status: "ok" });
-});
 
 async function call(handler, path, { method = "GET", token, body, query = {} } = {}) {
   const response = await handler({
