@@ -57,9 +57,21 @@ Never put `OPENAI_API_KEY`, `JWT_SECRET`, or database credentials in frontend co
 
 Build the frontend with `npm run build`, then start the API with `npm start`. The Express server serves the built frontend and API from the same origin. Configure the production environment variables and provide a PostgreSQL service before starting the server.
 
-### Public static hosting
+### Free full-stack deployment (Render + Neon)
 
-The Netlify build publishes the frontend in browser-only mode (`VITE_LOCAL_ONLY=true`). This is suitable for Netlify's static free hosting and requires no server secrets: each visitor's tasks are stored only in that visitor's browser using LocalStorage. Accounts and cross-device/cloud sync require deploying the Express API and PostgreSQL database separately; the static Netlify build does not provide those services.
+The `render.yaml` Blueprint deploys the Express API and React app together on Render's free web-service plan. Use Neon for PostgreSQL so account and task data stays in a persistent database:
+
+1. Create a free PostgreSQL project at [Neon](https://neon.tech/) and copy its connection string.
+2. Push the `task-manager-dev` branch to GitHub.
+3. In Render, create a new Blueprint from `Nouman435/Task-maneger-dev-` and select the `task-manager-dev` branch.
+4. When prompted for `DATABASE_URL`, paste the Neon connection string. Render generates `JWT_SECRET` securely from the Blueprint.
+5. Deploy the Blueprint. Open the Render URL, create an account, and sign in.
+
+The free Render web service can spin down when idle, so the first request after inactivity may take about a minute. The Neon database is separate from Render's temporary filesystem, so accounts and tasks persist across app restarts and deployments. Keep `DATABASE_URL` and `JWT_SECRET` private and configure them only in Render's environment settings.
+
+### Static hosting limitation
+
+The Netlify configuration builds in browser-only mode (`VITE_LOCAL_ONLY=true`) and does not include the Express API. That static build intentionally skips registration and sign-in; use the full-stack Render deployment above for accounts, password authentication, and cross-device task storage.
 
 ## Tests
 

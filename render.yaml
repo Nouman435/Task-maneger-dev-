@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: daymark-task-manager
+    runtime: node
+    plan: free
+    branch: task-manager-dev
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
