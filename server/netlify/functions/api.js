@@ -1,4 +1,4 @@
-const { randomUUID, createHash } = require("node:crypto");
+const { randomBytes, randomUUID, createHash } = require("node:crypto");
 const bcrypt = require("bcryptjs");
 const { connectLambda, getStore } = require("@netlify/blobs");
 const jwt = require("jsonwebtoken");
@@ -12,18 +12,33 @@ function hash(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function jwtSecret() {
-  const secret = process.env.JWT_SECRET;
-  if (!secret || secret.length < 32) {
-    const error = new Error("JWT_SECRET must be configured as a secret Netlify environment variable.");
-    error.statusCode = 503;
-    throw error;
+async function jwtSecret(store) {
+  const configuredSecret = process.env.JWT_SECRET;
+  if (configuredSecret) {
+    if (configuredSecret.length < 32) {
+      const error = new Error("JWT_SECRET must contain at least 32 characters.");
+      error.statusCode = 503;
+      throw error;
+    }
+    return configuredSecret;
   }
-  return secret;
+
+  const key = "config:jwt-secret";
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const existingSecret = await store.get(key, { type: "json" });
+    if (typeof existingSecret === "string" && existingSecret.length >= 32) return existingSecret;
+    if (existingSecret !== null) fail(503, "The stored authentication configuration is invalid.");
+
+    const generatedSecret = randomBytes(48).toString("hex");
+    const result = await store.setJSON(key, generatedSecret, { onlyIfNew: true });
+    if (result.modified) return generatedSecret;
+    await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+  }
+  fail(503, "The authentication service could not initialize. Please try again.");
 }
 
-function createToken(user) {
-  return jwt.sign({ email: user.email }, jwtSecret(), {
+function createToken(user, secret) {
+  return jwt.sign({ email: user.email }, secret, {
     subject: user.id,
     expiresIn: "12h"
   });
@@ -93,6 +108,7 @@ function createHandler(store) {
 
       if (route === "api/auth/register" && method === "POST") {
         const input = authSchema.parse(body);
+        const signingSecret = await jwtSecret(store);
         const user = {
           id: randomUUID(),
           email: input.email,
@@ -105,7 +121,7 @@ function createHandler(store) {
           await store.delete(`account:${user.id}`);
           return json(409, { error: "An account with this email already exists." });
         }
-        return json(201, { token: createToken(user), user: { id: user.id, email: user.email } });
+        return json(201, { token: createToken(user, signingSecret), user: { id: user.id, email: user.email } });
       }
 
       if (route === "api/auth/login" && method === "POST") {
@@ -115,15 +131,17 @@ function createHandler(store) {
         if (!user || !(await bcrypt.compare(input.password, user.passwordHash))) {
           return json(401, { error: "Email or password is incorrect." });
         }
-        return json(200, { token: createToken(user), user: { id: user.id, email: user.email } });
+        const signingSecret = await jwtSecret(store);
+        return json(200, { token: createToken(user, signingSecret), user: { id: user.id, email: user.email } });
       }
 
       const authorization = (event.headers?.authorization || event.headers?.Authorization || "").split(" ");
       const sessionToken = authorization[0] === "Bearer" ? authorization[1] : "";
       if (!sessionToken) return json(401, { error: "Please sign in to continue." });
+      const signingSecret = await jwtSecret(store);
       let claims;
       try {
-        claims = jwt.verify(sessionToken, jwtSecret());
+        claims = jwt.verify(sessionToken, signingSecret);
       } catch (error) {
         if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) {
           return json(401, { error: "Your session has expired. Please sign in again." });

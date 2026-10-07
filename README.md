@@ -59,9 +59,9 @@ Build the frontend with `npm run build`, then start the API with `npm start`. Th
 
 ### Netlify deployment
 
-The Netlify build serves the React app and its `/api/*` routes from Netlify Functions. Registration and sign-in use bcrypt-hashed passwords, expiring signed bearer tokens, and Netlify Blobs for persistent account and task data. No separate database or hosting provider is required. The Netlify function keeps task data isolated by account; the normal local development server continues to use SQLite or PostgreSQL.
+The Netlify build serves the React app and its `/api/*` routes from Netlify Functions. Registration and sign-in use bcrypt-hashed passwords, expiring signed bearer tokens, and Netlify Blobs for persistent account, task, and signing-key data. No separate database or hosting provider is required. The Netlify function keeps task data isolated by account; the normal local development server continues to use SQLite or PostgreSQL.
 
-The `netlify.toml` file configures the build, function directory, and API rewrite. Set `JWT_SECRET` as a secret environment variable for Netlify Functions before deploying; use a randomly generated value of at least 32 characters. For continuous deployment, connect the Netlify project to the `task-manager-dev` branch of the GitHub repository. Netlify Drop deployments do not automatically follow GitHub pushes.
+The `netlify.toml` file configures the build, function directory, and API rewrite. The Netlify function creates and persists a random signing key in the site's private Blobs store on first use. For continuous deployment, connect the Netlify project to the `task-manager-dev` branch of the GitHub repository. Netlify Drop deployments do not automatically follow GitHub pushes.
 
 ## Tests
 

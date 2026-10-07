@@ -3,8 +3,6 @@ const assert = require("node:assert/strict");
 const { createHandler } = require("../netlify/functions/api");
 const { handler } = require("../netlify/functions/api");
 
-process.env.JWT_SECRET = "unit-test-secret-with-more-than-32-characters";
-
 function createMemoryStore() {
   const records = new Map();
   let revision = 0;
