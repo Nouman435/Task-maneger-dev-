@@ -1,4 +1,7 @@
 import { getStore } from "@netlify/blobs";
+import "bcryptjs";
+import "jsonwebtoken";
+import "zod";
 import api from "../api-handler.cjs";
 
 export default async function handler(request) {
@@ -14,7 +17,7 @@ export default async function handler(request) {
     body
   };
   const response = await api.createHandler(getStore("daymark-data"))(event);
-  return new Response(response.body, {
+  return new Response(response.statusCode === 204 ? null : response.body, {
     status: response.statusCode,
     headers: response.headers
   });
